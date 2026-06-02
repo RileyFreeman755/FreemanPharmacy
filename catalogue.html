@@ -4542,6 +4542,9 @@
         modalVideo.style.display = "block";
         modalVideo.src = currentMedia;
         modalVideo.load();
+        modalVideo.play().catch(function(error) {
+          console.warn("Lecture video impossible :", error);
+        });
       } else {
         modalVideo.pause();
         modalVideo.removeAttribute("src");
