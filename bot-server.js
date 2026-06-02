@@ -854,6 +854,31 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/auth/profile") {
+    const session = getSession(req);
+    if (!session) {
+      sendJson(res, 401, { ok: false, error: "Connexion requise" });
+      return;
+    }
+
+    try {
+      const body = JSON.parse(await readBody(req));
+      const avatar = String(body.avatar || "");
+
+      if (avatar && !avatar.startsWith("data:image/")) {
+        sendJson(res, 400, { ok: false, error: "Image invalide." });
+        return;
+      }
+
+      authStore.users[session.username].avatar = avatar;
+      saveAuthStore();
+      sendJson(res, 200, { ok: true, user: publicUser(session.username) });
+    } catch (error) {
+      sendJson(res, 500, { ok: false, error: error.message });
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/orders") {
     const session = getSession(req);
     if (!isOwnerSession(session)) {

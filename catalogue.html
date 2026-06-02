@@ -4163,6 +4163,71 @@
       return accounts[currentUsername];
     }
 
+    function resizeAvatar(file) {
+      return new Promise(function(resolve, reject) {
+        const reader = new FileReader();
+        reader.onload = function() {
+          const image = new Image();
+          image.onload = function() {
+            const maxSize = 420;
+            const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+            const width = Math.max(1, Math.round(image.width * scale));
+            const height = Math.max(1, Math.round(image.height * scale));
+            const canvas = document.createElement("canvas");
+            const context = canvas.getContext("2d");
+            canvas.width = width;
+            canvas.height = height;
+            context.drawImage(image, 0, 0, width, height);
+            resolve(canvas.toDataURL("image/jpeg", 0.82));
+          };
+          image.onerror = reject;
+          image.src = reader.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function saveProfileAvatar(avatar) {
+      const response = await fetch(apiUrl("/api/auth/profile"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ avatar: avatar })
+      });
+      const data = await response.json().catch(function() {
+        return { ok: false, error: "Sauvegarde photo impossible." };
+      });
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || "Sauvegarde photo impossible.");
+      }
+      if (data.user) {
+        updateCurrentAccount({
+          avatar: data.user.avatar || "",
+          role: data.user.role || "client",
+          createdAt: data.user.createdAt || ""
+        });
+      }
+      return data;
+    }
+
+    async function refreshCurrentAccountFromServer() {
+      try {
+        const response = await fetch(apiUrl("/api/auth/session"), { credentials: "include" });
+        const data = await response.json();
+        if (response.ok && data.ok && data.authenticated && data.user && data.user.username === currentUsername) {
+          updateCurrentAccount({
+            avatar: data.user.avatar || "",
+            role: data.user.role || "client",
+            createdAt: data.user.createdAt || ""
+          });
+          renderProfileStats();
+        }
+      } catch (error) {
+        console.warn("Synchronisation profil impossible :", error);
+      }
+    }
+
     function escapeHtml(value) {
       return String(value || "")
         .replace(/&/g, "&amp;")
@@ -5178,20 +5243,28 @@
       }, { passive: false });
     }
     if (profilePhotoInputEl) {
-      profilePhotoInputEl.addEventListener("change", function(event) {
+      profilePhotoInputEl.addEventListener("change", async function(event) {
         const file = event.target.files && event.target.files[0];
         if (!file) {
           return;
         }
 
-        const reader = new FileReader();
-        reader.onload = function() {
-          updateCurrentAccount({ avatar: reader.result });
+        try {
+          const avatar = await resizeAvatar(file);
+          updateCurrentAccount({ avatar: avatar });
           renderProfileStats();
-        };
-        reader.readAsDataURL(file);
+          await saveProfileAvatar(avatar);
+          renderProfileStats();
+        } catch (error) {
+          console.warn("Sauvegarde photo impossible :", error);
+        }
       });
     }
+    window.addEventListener("storage", function(event) {
+      if (event.key === ACCOUNTS_KEY) {
+        renderProfileStats();
+      }
+    });
     document.addEventListener("keydown", function(event) {
       if (event.key === "Escape") {
         modal.classList.remove("open");
@@ -5206,6 +5279,7 @@
     renderChips();
     renderCategoryHeaders();
     renderProducts();
+    refreshCurrentAccountFromServer();
     loadStockStatuses();
     updateDeliveryNote();
     renderCart();
