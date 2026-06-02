@@ -3354,8 +3354,14 @@
 </head>
 <body>
   <script>
+    const API_BASE = "https://freemanpharmacy.onrender.com";
+
+    function apiUrl(path) {
+      return API_BASE + path;
+    }
+
     (function() {
-      fetch("/api/auth/session", { credentials: "same-origin" })
+      fetch(apiUrl("/api/auth/session"), { credentials: "include" })
         .then(function(response) { return response.json(); })
         .then(function(data) {
           if (!data.authenticated || !data.user) {
@@ -4119,7 +4125,7 @@
 
     async function loadStockStatuses() {
       try {
-        const response = await fetch("/api/stock", { credentials: "same-origin" });
+        const response = await fetch(apiUrl("/api/stock"), { credentials: "include" });
         const data = await response.json();
         if (response.ok && data.ok && data.stock) {
           saveStockStatuses(data.stock);
@@ -4239,10 +4245,10 @@
       renderProducts();
 
       try {
-        const response = await fetch("/api/stock", {
+        const response = await fetch(apiUrl("/api/stock"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          credentials: "same-origin",
+          credentials: "include",
           body: JSON.stringify({ productId: productId, status: value })
         });
         const data = await response.json();
@@ -4359,9 +4365,9 @@
         event.preventDefault();
       }
       try {
-        await fetch("/api/auth/logout", {
+        await fetch(apiUrl("/api/auth/logout"), {
           method: "POST",
-          credentials: "same-origin"
+          credentials: "include"
         });
       } catch (error) {}
       localStorage.removeItem(SESSION_KEY);
@@ -4753,7 +4759,7 @@
       ownerOrdersLoading = true;
 
       try {
-        const response = await fetch("/api/orders", { credentials: "same-origin" });
+        const response = await fetch(apiUrl("/api/orders"), { credentials: "include" });
         const data = await response.json();
         if (response.ok && data.ok && Array.isArray(data.orders)) {
           ownerServerOrders = data.orders;
@@ -4771,7 +4777,7 @@
       userOrdersLoading = true;
 
       try {
-        const response = await fetch("/api/my-orders", { credentials: "same-origin" });
+        const response = await fetch(apiUrl("/api/my-orders"), { credentials: "include" });
         const data = await response.json();
         if (response.ok && data.ok && Array.isArray(data.orders)) {
           userServerOrders = data.orders;
@@ -4788,10 +4794,10 @@
 
     async function updateOrderStatus(orderId, status) {
       try {
-        const response = await fetch("/api/order/status", {
+        const response = await fetch(apiUrl("/api/order/status"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          credentials: "same-origin",
+          credentials: "include",
           body: JSON.stringify({ orderId: orderId, status: status })
         });
         const data = await response.json();
@@ -4958,10 +4964,10 @@
     }
 
     async function sendOrderToTelegramBot(payload) {
-      const response = await fetch("/api/order", {
+      const response = await fetch(apiUrl("/api/order"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
+        credentials: "include",
         body: JSON.stringify(payload)
       });
 

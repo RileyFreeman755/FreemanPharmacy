@@ -302,7 +302,7 @@ function setSessionCookie(res, username, role) {
   saveAuthStore();
 
   res.setHeader("Set-Cookie", [
-    "kush75_session_id=" + encodeURIComponent(signSession(id)) + "; Path=/; HttpOnly; SameSite=Lax; Max-Age=" + Math.floor(SESSION_TTL_MS / 1000)
+    "kush75_session_id=" + encodeURIComponent(signSession(id)) + "; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=" + Math.floor(SESSION_TTL_MS / 1000)
   ]);
 }
 
@@ -314,7 +314,7 @@ function clearSessionCookie(req, res) {
     saveAuthStore();
     deleteSupabaseSession(id).catch((error) => console.error("[supabase] delete session:", error.message));
   }
-  res.setHeader("Set-Cookie", "kush75_session_id=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+  res.setHeader("Set-Cookie", "kush75_session_id=; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=0");
 }
 
 function isOwnerSession(session) {
@@ -326,6 +326,8 @@ function isOwnerSession(session) {
 function sendJson(res, status, payload) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
+    "Access-Control-Allow-Origin": "https://rileyfreeman755.github.io",
+    "Access-Control-Allow-Credentials": "true",
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS"
   });

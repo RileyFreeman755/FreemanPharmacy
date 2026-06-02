@@ -2031,7 +2031,12 @@
     startIntro.addEventListener("click", launchIntro);
 
     const SESSION_KEY = "kush75_session";
+    const API_BASE = "https://freemanpharmacy.onrender.com";
     let authMode = "login";
+
+    function apiUrl(path) {
+      return API_BASE + path;
+    }
 
     function storedAccountUsername() {
       const username = localStorage.getItem(SESSION_KEY) || "";
@@ -2064,7 +2069,7 @@
       const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
+        credentials: "include",
         body: JSON.stringify(payload)
       });
       const data = await response.json().catch(function() {
@@ -2082,7 +2087,7 @@
         return;
       }
       try {
-        const response = await fetch("/api/auth/session", { credentials: "same-origin" });
+        const response = await fetch(apiUrl("/api/auth/session"), { credentials: "include" });
         const data = await response.json();
         const memberCount = Number(data.memberCount || 0);
         memberCountEl.innerText = String(memberCount);
@@ -2173,7 +2178,7 @@
         }
 
         try {
-          const data = await apiRequest("/api/auth/register", {
+          const data = await apiRequest(apiUrl("/api/auth/register"), {
             username: username,
             password: password,
             confirmPassword: confirmPassword,
@@ -2192,7 +2197,7 @@
       }
 
       try {
-        const data = await apiRequest("/api/auth/login", {
+        const data = await apiRequest(apiUrl("/api/auth/login"), {
           username: username,
           password: password,
           accessCode: siteCode
@@ -2249,7 +2254,7 @@
 
     applyAccountMode();
 
-    fetch("/api/auth/session", { credentials: "same-origin" })
+    fetch(apiUrl("/api/auth/session"), { credentials: "include" })
       .then(function(response) { return response.json(); })
       .then(function(data) {
         if (data.authenticated && data.user) {
