@@ -668,6 +668,61 @@
       color: #03111d;
     }
 
+    .admin-media-panel {
+      display: none;
+      margin: 18px 0;
+      padding: 14px;
+      border: 1px solid rgba(125, 211, 252, 0.18);
+      border-radius: 14px;
+      background: rgba(2, 8, 23, 0.52);
+    }
+
+    .admin-media-panel.open {
+      display: block;
+    }
+
+    .admin-media-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .admin-media-label,
+    .admin-media-btn {
+      border: 1px solid rgba(125, 211, 252, 0.24);
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.9);
+      color: #e0f2fe;
+      padding: 10px 13px;
+      font-size: 0.72rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+
+    .admin-media-label input {
+      display: none;
+    }
+
+    .admin-media-btn {
+      background: linear-gradient(135deg, #23ffd0, #75ddff);
+      color: #03111d;
+    }
+
+    .admin-media-btn:disabled {
+      cursor: wait;
+      opacity: 0.62;
+    }
+
+    .admin-media-status {
+      margin-top: 10px;
+      min-height: 18px;
+      color: rgba(224, 242, 254, 0.72);
+      font-size: 0.78rem;
+      line-height: 1.4;
+    }
+
     .card-body { padding: 14px 14px 16px; }
     .card h3 {
       font-size: 1rem;
@@ -3569,6 +3624,16 @@
         <div class="modal-price" id="modalPrice"></div>
         <p class="modal-desc" id="modalDesc"></p>
         <div class="option-list" id="optionList"></div>
+        <div class="admin-media-panel" id="adminMediaPanel">
+          <div class="admin-media-row">
+            <label class="admin-media-label">
+              Choisir media
+              <input id="adminProductMediaInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm">
+            </label>
+            <button class="admin-media-btn" id="adminProductMediaButton" type="button" onclick="uploadCurrentProductMedia()">Ajouter au produit</button>
+          </div>
+          <div class="admin-media-status" id="adminProductMediaStatus"></div>
+        </div>
         <div class="product-cart">
           <div class="product-qty">
             <button type="button" onclick="changeProductQty(-1)">&minus;</button>
@@ -4040,6 +4105,10 @@
     const modal = document.getElementById("modal");
     const modalImage = document.getElementById("modalImage");
     const modalVideo = document.getElementById("modalVideo");
+    const adminMediaPanelEl = document.getElementById("adminMediaPanel");
+    const adminProductMediaInputEl = document.getElementById("adminProductMediaInput");
+    const adminProductMediaButtonEl = document.getElementById("adminProductMediaButton");
+    const adminProductMediaStatusEl = document.getElementById("adminProductMediaStatus");
     const cartOverlay = document.getElementById("cartOverlay");
     const profileOverlay = document.getElementById("profileOverlay");
     const cartItemsEl = document.getElementById("cartItems");
@@ -4086,6 +4155,7 @@
     let ownerOrdersLoading = false;
     let userServerOrders = [];
     let userOrdersLoading = false;
+    let productMediaByProduct = {};
 
     function readJson(key, fallback) {
       try {
@@ -4121,6 +4191,43 @@
 
     function saveStockStatuses(statuses) {
       writeJson(STOCK_KEY, statuses);
+    }
+
+    function apiMediaUrl(path) {
+      return apiUrl("/api/product-media/file/" + String(path || "").split("/").map(encodeURIComponent).join("/"));
+    }
+
+    function productGallery(product) {
+      const uploaded = Array.isArray(productMediaByProduct[product.id]) ? productMediaByProduct[product.id] : [];
+      return (product.baseGallery || product.gallery || []).concat(uploaded.map(function(media) {
+        return media.url && media.url.indexOf("/api/") === 0 ? apiUrl(media.url) : apiMediaUrl(media.path);
+      }));
+    }
+
+    async function loadProductMedia() {
+      try {
+        const response = await fetch(apiUrl("/api/product-media"), { credentials: "include" });
+        const data = await response.json();
+        if (response.ok && data.ok && data.media) {
+          productMediaByProduct = data.media;
+          if (currentProduct) {
+            currentProduct.gallery = productGallery(currentProduct);
+            currentGalleryIndex = Math.min(currentGalleryIndex, currentProduct.gallery.length - 1);
+            renderGallery();
+          }
+        }
+      } catch (error) {
+        console.warn("Chargement medias impossible :", error);
+      }
+    }
+
+    function readFileAsDataUrl(file) {
+      return new Promise(function(resolve, reject) {
+        const reader = new FileReader();
+        reader.onload = function() { resolve(reader.result); };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
     }
 
     async function loadStockStatuses() {
@@ -4326,6 +4433,64 @@
       }
     }
 
+    async function uploadCurrentProductMedia() {
+      if (!currentProduct || !adminProductMediaInputEl) {
+        return;
+      }
+
+      const file = adminProductMediaInputEl.files && adminProductMediaInputEl.files[0];
+      if (!file) {
+        if (adminProductMediaStatusEl) adminProductMediaStatusEl.textContent = "Choisis une image ou une video MP4.";
+        return;
+      }
+
+      const allowedTypes = ["image/png", "image/jpeg", "image/webp", "image/gif", "video/mp4", "video/webm"];
+      if (!allowedTypes.includes(file.type)) {
+        if (adminProductMediaStatusEl) adminProductMediaStatusEl.textContent = "Format refuse. Utilise MP4, WEBM ou image web.";
+        return;
+      }
+
+      if (file.size > 50 * 1024 * 1024) {
+        if (adminProductMediaStatusEl) adminProductMediaStatusEl.textContent = "Fichier trop lourd. Max 50 Mo.";
+        return;
+      }
+
+      try {
+        if (adminProductMediaButtonEl) adminProductMediaButtonEl.disabled = true;
+        if (adminProductMediaStatusEl) adminProductMediaStatusEl.textContent = "Upload en cours...";
+
+        const dataUrl = await readFileAsDataUrl(file);
+        const response = await fetch(apiUrl("/api/product-media"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            productId: currentProduct.id,
+            fileName: file.name,
+            mimeType: file.type,
+            dataUrl: dataUrl
+          })
+        });
+        const data = await response.json().catch(function() {
+          return { ok: false, error: "Upload impossible." };
+        });
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || "Upload impossible.");
+        }
+
+        productMediaByProduct = data.mediaByProduct || productMediaByProduct;
+        currentProduct.gallery = productGallery(currentProduct);
+        currentGalleryIndex = currentProduct.gallery.length - 1;
+        adminProductMediaInputEl.value = "";
+        renderGallery();
+        if (adminProductMediaStatusEl) adminProductMediaStatusEl.textContent = "Media ajoute au produit.";
+      } catch (error) {
+        if (adminProductMediaStatusEl) adminProductMediaStatusEl.textContent = error.message;
+      } finally {
+        if (adminProductMediaButtonEl) adminProductMediaButtonEl.disabled = false;
+      }
+    }
+
     function formatProductTags(product) {
       const tags = [product.badge, product.note]
         .filter(Boolean)
@@ -4440,18 +4605,22 @@
     }
 
     function openProduct(id) {
-      currentProduct = products.find(function(product) {
+      const product = products.find(function(product) {
         return product.id === id;
       });
 
-      if (!currentProduct) {
+      if (!product) {
         return;
       }
 
-      if (productAvailability(currentProduct).value === "out") {
+      if (productAvailability(product).value === "out") {
         return;
       }
 
+      currentProduct = Object.assign({}, product, {
+        baseGallery: product.gallery || [],
+        gallery: productGallery(product)
+      });
       currentGalleryIndex = 0;
       currentProductQty = 1;
       currentSelectedOption = currentProduct.options[0];
@@ -4470,6 +4639,17 @@
           </div>
         `;
       }).join("");
+
+      const isOwner = isOwnerAccount(currentUsername);
+      if (adminMediaPanelEl) {
+        adminMediaPanelEl.classList.toggle("open", isOwner);
+      }
+      if (adminProductMediaInputEl) {
+        adminProductMediaInputEl.value = "";
+      }
+      if (adminProductMediaStatusEl) {
+        adminProductMediaStatusEl.textContent = isOwner ? "Ajoute une image ou une video MP4 a ce produit." : "";
+      }
 
       renderGallery();
       modal.classList.add("open");
@@ -5283,6 +5463,7 @@
     renderCategoryHeaders();
     renderProducts();
     refreshCurrentAccountFromServer();
+    loadProductMedia();
     loadStockStatuses();
     updateDeliveryNote();
     renderCart();
@@ -5291,6 +5472,7 @@
     window.renderProfileStats = renderProfileStats;
     window.updateOrderStatus = updateOrderStatus;
     window.setProductAvailability = setProductAvailability;
+    window.uploadCurrentProductMedia = uploadCurrentProductMedia;
   </script>
   <script>
     const tg = window.Telegram?.WebApp;

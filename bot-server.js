@@ -10,6 +10,7 @@ const CHAT_ID = String(process.env.TELEGRAM_CHAT_ID || "");
 const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || "kushrider75_bot";
 const STORE_PATH = path.join(__dirname, "bot-orders.json");
 const AUTH_PATH = path.join(__dirname, "auth-store.json");
+const PRODUCT_MEDIA_PATH = path.join(__dirname, "product-media.json");
 const ACCESS_CODE = process.env.KUSH_ACCESS_CODE || process.env.ACCESS_CODE || "";
 const OWNER_CODE = process.env.KUSH_OWNER_CODE || process.env.OWNER_CODE || "";
 const SUPABASE_URL = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
@@ -17,11 +18,15 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const USE_SUPABASE = Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 365;
 const OWNER_USERNAMES = ["riley"];
+const MEDIA_BUCKET = "product-media";
+const MEDIA_MANIFEST_PATH = "manifest/product-media.json";
+const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
 
 let lastUpdateId = 0;
 let store = loadStore();
 let authStore = loadAuthStore();
 let stockStore = {};
+let productMediaStore = loadProductMediaStore();
 const SESSION_SECRET = process.env.SESSION_SECRET || authStore.sessionSecret;
 
 function loadStore() {
@@ -67,6 +72,22 @@ function saveAuthStore() {
   }
 }
 
+function loadProductMediaStore() {
+  try {
+    const loaded = JSON.parse(fs.readFileSync(PRODUCT_MEDIA_PATH, "utf8"));
+    return loaded && typeof loaded === "object" ? loaded : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function saveProductMediaStore() {
+  fs.writeFileSync(PRODUCT_MEDIA_PATH, JSON.stringify(productMediaStore, null, 2));
+  if (USE_SUPABASE) {
+    syncProductMediaManifest().catch((error) => console.error("[supabase] sync media:", error.message));
+  }
+}
+
 function supabaseHeaders(extra) {
   return Object.assign({
     apikey: SUPABASE_SERVICE_ROLE_KEY,
@@ -74,6 +95,18 @@ function supabaseHeaders(extra) {
     "Content-Type": "application/json",
     Accept: "application/json"
   }, extra || {});
+}
+
+function supabaseStorageHeaders(extra) {
+  return Object.assign({
+    Authorization: "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
+    "Content-Type": "application/json",
+    Accept: "application/json"
+  }, extra || {});
+}
+
+function encodeStoragePath(objectPath) {
+  return String(objectPath || "").split("/").map(encodeURIComponent).join("/");
 }
 
 async function supabaseRequest(pathname, options) {
@@ -88,6 +121,82 @@ async function supabaseRequest(pathname, options) {
   if (response.status === 204) return null;
   const text = await response.text();
   return text ? JSON.parse(text) : null;
+}
+
+async function ensureMediaBucket() {
+  if (!USE_SUPABASE) return;
+
+  const getResponse = await fetch(SUPABASE_URL + "/storage/v1/bucket/" + encodeURIComponent(MEDIA_BUCKET), {
+    headers: supabaseStorageHeaders()
+  });
+  if (getResponse.ok) return;
+  if (getResponse.status !== 404) {
+    const text = await getResponse.text().catch(() => "");
+    throw new Error("bucket " + getResponse.status + " " + text);
+  }
+
+  const createResponse = await fetch(SUPABASE_URL + "/storage/v1/bucket", {
+    method: "POST",
+    headers: supabaseStorageHeaders(),
+    body: JSON.stringify({ id: MEDIA_BUCKET, name: MEDIA_BUCKET, public: false })
+  });
+  if (!createResponse.ok && createResponse.status !== 409) {
+    const text = await createResponse.text().catch(() => "");
+    throw new Error("create bucket " + createResponse.status + " " + text);
+  }
+}
+
+async function uploadSupabaseObject(objectPath, bytes, contentType) {
+  await ensureMediaBucket();
+  const response = await fetch(SUPABASE_URL + "/storage/v1/object/" + MEDIA_BUCKET + "/" + encodeStoragePath(objectPath), {
+    method: "PUT",
+    headers: supabaseStorageHeaders({
+      "Content-Type": contentType || "application/octet-stream",
+      "Cache-Control": "3600",
+      upsert: "true"
+    }),
+    body: bytes
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error("upload media " + response.status + " " + text);
+  }
+}
+
+async function downloadSupabaseObject(objectPath) {
+  const response = await fetch(SUPABASE_URL + "/storage/v1/object/" + MEDIA_BUCKET + "/" + encodeStoragePath(objectPath), {
+    headers: supabaseStorageHeaders({ Accept: "*/*" })
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error("download media " + response.status + " " + text);
+  }
+  return response;
+}
+
+async function syncProductMediaManifest() {
+  if (!USE_SUPABASE) return;
+  await uploadSupabaseObject(
+    MEDIA_MANIFEST_PATH,
+    Buffer.from(JSON.stringify(productMediaStore, null, 2), "utf8"),
+    "application/json"
+  );
+}
+
+async function hydrateProductMediaFromSupabase() {
+  if (!USE_SUPABASE) return;
+  try {
+    await ensureMediaBucket();
+    const response = await downloadSupabaseObject(MEDIA_MANIFEST_PATH);
+    const text = await response.text();
+    const loaded = JSON.parse(text || "{}");
+    productMediaStore = loaded && typeof loaded === "object" ? loaded : {};
+    fs.writeFileSync(PRODUCT_MEDIA_PATH, JSON.stringify(productMediaStore, null, 2));
+  } catch (error) {
+    if (!String(error.message || "").includes("404")) {
+      console.error("[supabase] hydrate media:", error.message);
+    }
+  }
 }
 
 async function syncAuthToSupabase() {
@@ -367,7 +476,7 @@ function serveStatic(req, res) {
   }
 
   const filePath = path.resolve(__dirname, "." + pathname);
-  if (!filePath.startsWith(__dirname) || filePath === AUTH_PATH || filePath === STORE_PATH || filePath.endsWith(".js") && path.basename(filePath) === "bot-server.js") {
+  if (!filePath.startsWith(__dirname) || filePath === AUTH_PATH || filePath === STORE_PATH || filePath === PRODUCT_MEDIA_PATH || filePath.endsWith(".js") && path.basename(filePath) === "bot-server.js") {
     sendJson(res, 403, { ok: false, error: "Acces refuse" });
     return;
   }
@@ -701,12 +810,29 @@ async function pollUpdates() {
   }
 }
 
-async function readBody(req) {
+function sanitizeFileName(name) {
+  const clean = String(name || "media")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+  return clean || "media";
+}
+
+function productMediaPublicPath(objectPath) {
+  return "/api/product-media/file/" + String(objectPath || "").split("/").map(encodeURIComponent).join("/");
+}
+
+async function readBody(req, maxBytes) {
   return new Promise((resolve, reject) => {
     let body = "";
+    const limit = maxBytes || 1_000_000;
     req.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 1_000_000) req.destroy();
+      if (body.length > limit) {
+        reject(new Error("Requete trop lourde"));
+        req.destroy();
+      }
     });
     req.on("end", () => resolve(body));
     req.on("error", reject);
@@ -879,6 +1005,98 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/product-media") {
+    sendJson(res, 200, {
+      ok: true,
+      media: productMediaStore
+    });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/api/product-media/file/")) {
+    if (!USE_SUPABASE) {
+      sendJson(res, 500, { ok: false, error: "Supabase requis pour les medias." });
+      return;
+    }
+
+    try {
+      const objectPath = decodeURIComponent(url.pathname.replace("/api/product-media/file/", ""));
+      const mediaResponse = await downloadSupabaseObject(objectPath);
+      const bytes = Buffer.from(await mediaResponse.arrayBuffer());
+      res.writeHead(200, {
+        "Content-Type": mediaResponse.headers.get("content-type") || "application/octet-stream",
+        "Access-Control-Allow-Origin": "https://rileyfreeman755.github.io",
+        "Access-Control-Allow-Credentials": "true",
+        "Cache-Control": "public, max-age=3600"
+      });
+      res.end(bytes);
+    } catch (error) {
+      sendJson(res, 404, { ok: false, error: "Media introuvable" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/product-media") {
+    const session = getSession(req);
+    if (!isOwnerSession(session)) {
+      sendJson(res, 403, { ok: false, error: "Acces patron requis" });
+      return;
+    }
+
+    if (!USE_SUPABASE) {
+      sendJson(res, 500, { ok: false, error: "Configure Supabase pour envoyer des medias." });
+      return;
+    }
+
+    try {
+      const body = JSON.parse(await readBody(req, MAX_MEDIA_BYTES * 2));
+      const productId = String(body.productId || "").trim();
+      const fileName = sanitizeFileName(body.fileName || "media");
+      const mimeType = String(body.mimeType || "").toLowerCase();
+      const dataUrl = String(body.dataUrl || "");
+      const allowedTypes = ["image/png", "image/jpeg", "image/webp", "image/gif", "video/mp4", "video/webm"];
+      const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+
+      if (!productId || !/^[a-zA-Z0-9_-]+$/.test(productId)) {
+        sendJson(res, 400, { ok: false, error: "Produit invalide." });
+        return;
+      }
+
+      if (!allowedTypes.includes(mimeType) || !match || match[1].toLowerCase() !== mimeType) {
+        sendJson(res, 400, { ok: false, error: "Format refuse. Utilise MP4, WEBM ou image web." });
+        return;
+      }
+
+      const bytes = Buffer.from(match[2], "base64");
+      if (!bytes.length || bytes.length > MAX_MEDIA_BYTES) {
+        sendJson(res, 400, { ok: false, error: "Fichier trop lourd. Max 50 Mo." });
+        return;
+      }
+
+      const objectPath = productId + "/" + Date.now() + "-" + fileName;
+      await uploadSupabaseObject(objectPath, bytes, mimeType);
+
+      if (!Array.isArray(productMediaStore[productId])) {
+        productMediaStore[productId] = [];
+      }
+      const media = {
+        path: objectPath,
+        url: productMediaPublicPath(objectPath),
+        type: mimeType.startsWith("video/") ? "video" : "image",
+        name: fileName,
+        size: bytes.length,
+        createdAt: new Date().toISOString()
+      };
+      productMediaStore[productId].push(media);
+      saveProductMediaStore();
+
+      sendJson(res, 200, { ok: true, media: media, mediaByProduct: productMediaStore });
+    } catch (error) {
+      sendJson(res, 500, { ok: false, error: error.message });
+    }
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/orders") {
     const session = getSession(req);
     if (!isOwnerSession(session)) {
@@ -1036,6 +1254,7 @@ async function startServer() {
   if (USE_SUPABASE) {
     try {
       await hydrateFromSupabase();
+      await hydrateProductMediaFromSupabase();
       console.log("Supabase connecte: donnees chargees.");
     } catch (error) {
       console.error("[supabase] demarrage:", error.message);
