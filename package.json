@@ -1,0 +1,12 @@
+{
+  "name": "kush-rider-site",
+  "version": "1.0.0",
+  "private": true,
+  "main": "bot-server.js",
+  "scripts": {
+    "start": "node bot-server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
