@@ -981,10 +981,10 @@
     .modal.open { display: flex; }
 
     .modal-box {
-      width: min(1080px, 100%);
-      max-height: calc(100dvh - 96px);
+      width: min(1080px, calc(100vw - 48px));
+      height: min(600px, calc(100dvh - 96px));
       display: grid;
-      grid-template-columns: 1.02fr 0.98fr;
+      grid-template-columns: minmax(0, 552px) minmax(0, 1fr);
       overflow: hidden;
       border-radius: 30px;
       background: linear-gradient(180deg, rgba(255,252,246,0.98), rgba(238,223,198,0.96));
@@ -994,7 +994,8 @@
 
     .modal-media-pane {
       position: relative;
-      min-height: clamp(360px, 44vw, 520px);
+      min-height: 0;
+      height: 100%;
       background: linear-gradient(180deg, #efe2d1, #dcc3a2);
     }
 
@@ -2775,8 +2776,16 @@
       }
       .steps { grid-template-columns: 1fr; }
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .modal-box { grid-template-columns: 1fr; }
-      .modal-media-pane { min-height: 360px; }
+      .modal-box {
+        width: min(560px, calc(100vw - 24px));
+        height: auto;
+        max-height: calc(100dvh - 28px);
+        grid-template-columns: 1fr;
+      }
+      .modal-media-pane {
+        height: min(360px, 45vh);
+        min-height: 260px;
+      }
       .toolbar { gap: 12px; }
       .card h3 {
         font-size: 1.2rem;
