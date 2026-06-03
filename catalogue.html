@@ -1665,6 +1665,26 @@
       line-height: 1.45;
     }
 
+    .account-admin-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .admin-mini-btn {
+      border: 1px solid rgba(125, 211, 252, 0.24);
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.9);
+      color: #e0f2fe;
+      padding: 7px 9px;
+      font-size: 0.68rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
     .owner-panel {
       display: none;
     }
@@ -4166,6 +4186,8 @@
     let selectedAddressLabel = "";
     let ownerServerOrders = [];
     let ownerOrdersLoading = false;
+    let ownerServerUsers = [];
+    let ownerUsersLoading = false;
     let ownerAuditLogs = [];
     let ownerLogsLoading = false;
     let userServerOrders = [];
@@ -4921,6 +4943,7 @@
       renderLocalProfile(account);
       renderOrderHistory(userOrders);
       renderOwnerPanel();
+      loadOwnerUsers();
       loadOwnerOrders();
       loadOwnerLogs();
       loadUserOrders();
@@ -4981,14 +5004,15 @@
 
       if (ownerAccountsListEl) {
         const accounts = getAccounts();
-        const accountNames = Object.keys(accounts);
+        const accountNames = ownerServerUsers.length ? ownerServerUsers.map(function(user) { return user.username; }) : Object.keys(accounts);
         const accountOrdersSource = ownerServerOrders.length ? ownerServerOrders : getOrders();
         ownerAccountsListEl.innerHTML = accountNames.length
           ? '<div class="order-card"><strong>Comptes inscrits</strong>' + accountNames.map(function(username) {
               const accountOrders = accountOrdersSource.filter(function(order) { return order.username === username; }).length;
-              return '<div class="order-line">' + escapeHtml(username) + ' - ' + accountOrders + ' commande(s)</div>';
+              return '<div class="order-line account-admin-line"><span>' + escapeHtml(username) + ' - ' + accountOrders + ' commande(s)</span>'
+                + '<button class="admin-mini-btn" type="button" onclick="resetClientPassword(\'' + encodeURIComponent(username) + '\')">Reset MDP</button></div>';
             }).join("") + '</div>'
-          : '<p class="history-empty">Aucun compte enregistre.</p>';
+          : ownerUsersLoading ? '<p class="history-empty">Chargement des comptes...</p>' : '<p class="history-empty">Aucun compte enregistre.</p>';
       }
 
       renderOwnerLogs();
@@ -5036,7 +5060,8 @@
         order_created: "Commande creee",
         order_status_update: "Statut commande",
         stock_update: "Stock modifie",
-        media_upload: "Media ajoute"
+        media_upload: "Media ajoute",
+        password_reset: "Mot de passe reset"
       };
       return labels[type] || type || "Evenement";
     }
@@ -5081,6 +5106,54 @@
           + '<div class="order-line">IP : ' + escapeHtml(log.ip || "") + '</div>'
           + '</div>';
       }).join("");
+    }
+
+    async function loadOwnerUsers() {
+      if (!isOwnerAccount(currentUsername) || ownerUsersLoading) return;
+      ownerUsersLoading = true;
+
+      try {
+        const response = await fetch(apiUrl("/api/users"), { credentials: "include" });
+        const data = await response.json();
+        if (response.ok && data.ok && Array.isArray(data.users)) {
+          ownerServerUsers = data.users;
+        }
+      } catch (error) {
+        console.warn("Chargement comptes impossible :", error);
+      } finally {
+        ownerUsersLoading = false;
+        renderOwnerPanel();
+      }
+    }
+
+    async function resetClientPassword(encodedUsername) {
+      const username = decodeURIComponent(encodedUsername || "");
+      if (!username) return;
+      const newPassword = window.prompt("Nouveau mot de passe pour " + username + " :");
+      if (!newPassword) return;
+      if (newPassword.length < 4) {
+        window.alert("Le mot de passe doit faire au moins 4 caracteres.");
+        return;
+      }
+
+      try {
+        const response = await fetch(apiUrl("/api/auth/reset-password"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ username: username, password: newPassword })
+        });
+        const data = await response.json().catch(function() {
+          return { ok: false, error: "Reset impossible." };
+        });
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || "Reset impossible.");
+        }
+        window.alert("Mot de passe reset pour " + username + ".");
+        loadOwnerLogs();
+      } catch (error) {
+        window.alert(error.message);
+      }
     }
 
     async function loadOwnerLogs() {
@@ -5573,6 +5646,7 @@
     window.updateOrderStatus = updateOrderStatus;
     window.setProductAvailability = setProductAvailability;
     window.uploadCurrentProductMedia = uploadCurrentProductMedia;
+    window.resetClientPassword = resetClientPassword;
   </script>
   <script>
     const tg = window.Telegram?.WebApp;

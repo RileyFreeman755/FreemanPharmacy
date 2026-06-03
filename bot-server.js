@@ -1094,6 +1094,55 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/auth/reset-password") {
+    const session = getSession(req);
+    if (!isOwnerSession(session)) {
+      sendJson(res, 403, { ok: false, error: "Acces patron requis" });
+      return;
+    }
+
+    try {
+      const body = JSON.parse(await readBody(req));
+      const username = String(body.username || "").trim();
+      const password = String(body.password || "");
+
+      const targetUsername = Object.keys(authStore.users).find((name) => name.toLowerCase() === username.toLowerCase());
+      if (!username || !targetUsername) {
+        sendJson(res, 404, { ok: false, error: "Compte introuvable." });
+        return;
+      }
+
+      if (password.length < 4) {
+        sendJson(res, 400, { ok: false, error: "Le nouveau mot de passe doit faire au moins 4 caracteres." });
+        return;
+      }
+
+      const passwordData = createPassword(password);
+      authStore.users[targetUsername].salt = passwordData.salt;
+      authStore.users[targetUsername].hash = passwordData.hash;
+      saveAuthStore();
+      addAuditLog(req, "password_reset", session.username, { target: targetUsername });
+      sendJson(res, 200, { ok: true, user: publicUser(targetUsername) });
+    } catch (error) {
+      sendJson(res, 500, { ok: false, error: error.message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/users") {
+    const session = getSession(req);
+    if (!isOwnerSession(session)) {
+      sendJson(res, 403, { ok: false, error: "Acces patron requis" });
+      return;
+    }
+
+    sendJson(res, 200, {
+      ok: true,
+      users: Object.keys(authStore.users).sort().map(publicUser)
+    });
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/product-media") {
     sendJson(res, 200, {
       ok: true,
