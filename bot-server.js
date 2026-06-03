@@ -7,6 +7,7 @@ const crypto = require("crypto");
 const PORT = Number(process.env.PORT || 8787);
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = String(process.env.TELEGRAM_CHAT_ID || "");
+const PASS_CHAT_ID = String(process.env.TELEGRAM_PASS_CHAT_ID || "");
 const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || "kushrider75_bot";
 const STORE_PATH = path.join(__dirname, "bot-orders.json");
 const AUTH_PATH = path.join(__dirname, "auth-store.json");
@@ -602,10 +603,30 @@ function startLink(orderId) {
   return "https://t.me/" + BOT_USERNAME + "?start=" + encodeURIComponent(orderId);
 }
 
+function findDesiredTime(order) {
+  const direct = order.desiredTime || order.deliveryTime || order.time || order.hour || "";
+  if (direct) return String(direct);
+
+  const text = [
+    order.round,
+    order.service,
+    order.address,
+    order.notes,
+    order.instructions
+  ].filter(Boolean).join(" ");
+
+  const labelled = text.match(/(?:heure|creneau|tournee|souhaitee?|livraison)\s*:?\s*([0-2]?\d\s*(?:h|:)\s*[0-5]\d|[0-2]?\d\s*h)\b/i);
+  if (labelled) return labelled[1].replace(/\s+/g, "");
+
+  const plain = text.match(/\b([0-2]?\d\s*(?:h|:)\s*[0-5]\d|[0-2]?\d\s*h)\b/i);
+  return plain ? plain[1].replace(/\s+/g, "") : "";
+}
+
 function formatOrder(order) {
   const items = Array.isArray(order.items) && order.items.length
     ? order.items.map((item) => "- " + item.name + " (" + item.format + ") x" + item.quantity + " = " + item.lineTotal).join("\n")
     : "Panier vide";
+  const desiredTime = findDesiredTime(order);
 
   return [
     "✅ Commande " + order.id + " acceptee !",
@@ -614,8 +635,11 @@ function formatOrder(order) {
     items,
     "",
     "📍 Adresse : " + (order.address || "A renseigner"),
+    "⏰ Heure souhaitee : " + (desiredTime || order.round || "Non renseignee"),
     "🕘 Tournee : " + (order.round || "Non renseignee"),
     "🚚 Service : " + (order.service || "Non renseigne"),
+    "📞 Telephone : " + (order.phone || "Non renseigne"),
+    "💬 Contact : " + (order.contactName || "Non renseigne"),
     "",
     "💰 Total a encaisser : " + (order.total || "0.00 EUR"),
     "",
@@ -626,6 +650,29 @@ function formatOrder(order) {
     "Exemple : /msg Je suis en bas dans 10 min",
     "",
     "👇 Boutons livreur :"
+  ].join("\n");
+}
+
+function formatPassedOrder(order) {
+  const items = Array.isArray(order.items) && order.items.length
+    ? order.items.map((item) => "- " + item.name + " (" + item.format + ") x" + item.quantity + " = " + item.lineTotal).join("\n")
+    : "Panier vide";
+  const desiredTime = findDesiredTime(order);
+
+  return [
+    "Commande disponible",
+    "",
+    "Commande : " + order.id,
+    "Heure souhaitee : " + (desiredTime || order.round || "Non renseignee"),
+    "Service : " + (order.service || "Non renseigne"),
+    "Adresse : " + (order.address || "A renseigner"),
+    "",
+    "Produits :",
+    items,
+    "",
+    "Total a encaisser : " + (order.total || "0.00 EUR"),
+    "",
+    "Qui peut la prendre ?"
   ].join("\n");
 }
 
@@ -642,6 +689,7 @@ function deliveryKeyboard(orderId) {
         { text: "📍 Arrive", callback_data: "arrived|" + orderId }
       ],
       [{ text: "⚠️ Signaler un RETARD", callback_data: "delay|" + orderId }],
+      [{ text: "PASSER LA COMMANDE", callback_data: "pass|" + orderId }],
       [{ text: "✅ MARQUER COMME LIVREE", callback_data: "delivered|" + orderId }],
       [{ text: "◀️ Retour Menu Livreur", callback_data: "menu|" + orderId }]
     ]
@@ -669,6 +717,7 @@ function statusForAction(action) {
     eta_5: "Arrive bientot",
     arrived: "Arrive",
     delay: "Retard",
+    pass: "A reprendre",
     delivered: "Livree"
   };
   return statuses[action] || "";
@@ -682,6 +731,7 @@ function adminText(action, orderId) {
     eta_5: "⚡ 5 min envoye",
     arrived: "📍 Arrive envoye",
     delay: "⚠️ Retard signale",
+    pass: "Commande passee",
     delivered: "✅ Commande livree",
     menu: "◀️ Menu livreur"
   };
@@ -820,6 +870,59 @@ async function handleCallback(callback) {
   });
 
   if (action === "menu" || action === "done") return;
+
+  if (action === "pass") {
+    const order = store.orders[orderId];
+    if (!order) {
+      await telegram("sendMessage", {
+        chat_id: CHAT_ID,
+        text: "Commande introuvable pour " + orderId + "."
+      }).catch(() => {});
+      return;
+    }
+
+    if (!PASS_CHAT_ID) {
+      await telegram("sendMessage", {
+        chat_id: CHAT_ID,
+        text: "Configure TELEGRAM_PASS_CHAT_ID pour envoyer cette commande dans l'autre groupe."
+      }).catch(() => {});
+      return;
+    }
+
+    order.status = "A reprendre";
+    order.statusUpdatedAt = new Date().toISOString();
+    saveStore();
+
+    const passed = await telegram("sendMessage", {
+      chat_id: PASS_CHAT_ID,
+      text: formatPassedOrder(order),
+      reply_markup: {
+        inline_keyboard: [[{ text: "Je prends", callback_data: "take|" + orderId }]]
+      }
+    });
+
+    store.groupMessages[String(passed.message_id)] = orderId;
+    saveStore();
+
+    await telegram("sendMessage", {
+      chat_id: CHAT_ID,
+      text: "Commande " + orderId + " envoyee dans le groupe de reprise sans numero."
+    }).catch(() => {});
+    return;
+  }
+
+  if (action === "take") {
+    if (store.orders[orderId]) {
+      store.orders[orderId].status = "Reprise par livreur";
+      store.orders[orderId].statusUpdatedAt = new Date().toISOString();
+      saveStore();
+    }
+    await telegram("sendMessage", {
+      chat_id: CHAT_ID,
+      text: "Commande " + orderId + " reprise par " + clientLabel(callback) + "."
+    }).catch(() => {});
+    return;
+  }
 
   const text = clientText(action);
   const status = statusForAction(action);
