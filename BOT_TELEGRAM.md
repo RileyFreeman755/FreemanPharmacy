@@ -49,8 +49,32 @@ Le bot publie un message avec :
 - total
 - boutons livreur
 
-Le bouton `PASSER LA COMMANDE` envoie une version sans telephone dans `TELEGRAM_PASS_CHAT_ID`.
+Le bouton `ENVOYER LA PASSE` envoie une version sans telephone dans `TELEGRAM_PASS_CHAT_ID`.
 Cette version garde l'heure souhaitee, l'adresse, les produits et le total.
+Dans le groupe de reprise, le message affiche d'abord :
+
+- Je prends
+
+Quand un livreur clique sur `Je prends`, le bot affiche ensuite les boutons livreur utiles :
+
+- Arrivee -1h
+- 30 min
+- 10 min
+- 5 min
+- Arrive
+- Signaler un retard
+- Marquer comme livree
+
+Le bouton `ENVOYER LA PASSE` n'est pas remis dans le groupe de reprise.
+
+Dans le groupe de reprise, le livreur peut parler au client sans voir son numero :
+
+```text
+/msg Je suis en route.
+```
+
+Il peut aussi repondre au message de commande avec `/msg ton texte`.
+Les reponses du client reviennent dans le groupe du livreur qui a pris la commande.
 
 Le site ouvre aussi le bot avec un lien `/start` special pour connecter le client a sa commande.
 Quand le client appuie sur `Start`, le bot retient son chat ID.

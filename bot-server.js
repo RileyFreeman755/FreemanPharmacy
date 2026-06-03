@@ -689,9 +689,34 @@ function deliveryKeyboard(orderId) {
         { text: "📍 Arrive", callback_data: "arrived|" + orderId }
       ],
       [{ text: "⚠️ Signaler un RETARD", callback_data: "delay|" + orderId }],
-      [{ text: "PASSER LA COMMANDE", callback_data: "pass|" + orderId }],
+      [{ text: "🚚 ENVOYER LA PASSE", callback_data: "pass|" + orderId }],
       [{ text: "✅ MARQUER COMME LIVREE", callback_data: "delivered|" + orderId }],
-      [{ text: "◀️ Retour Menu Livreur", callback_data: "menu|" + orderId }]
+    ]
+  };
+}
+
+function passedDeliveryKeyboard(orderId) {
+  return {
+    inline_keyboard: [
+      [{ text: "Je prends", callback_data: "take|" + orderId }]
+    ]
+  };
+}
+
+function takenDeliveryKeyboard(orderId) {
+  return {
+    inline_keyboard: [
+      [{ text: "⏰ Arrivee -1h", callback_data: "eta_60|" + orderId }],
+      [
+        { text: "⌛ 30 min", callback_data: "eta_30|" + orderId },
+        { text: "⌛ 10 min", callback_data: "eta_10|" + orderId }
+      ],
+      [
+        { text: "⚡ 5 min", callback_data: "eta_5|" + orderId },
+        { text: "📍 Arrive", callback_data: "arrived|" + orderId }
+      ],
+      [{ text: "⚠️ Signaler un RETARD", callback_data: "delay|" + orderId }],
+      [{ text: "✅ MARQUER COMME LIVREE", callback_data: "delivered|" + orderId }],
     ]
   };
 }
@@ -779,7 +804,10 @@ async function handleStart(message) {
 }
 
 async function handleAdminMessage(message) {
-  if (String(message.chat.id) !== CHAT_ID) return;
+  const chatId = String(message.chat.id);
+  const isMainChat = chatId === CHAT_ID;
+  const isPassChat = PASS_CHAT_ID && chatId === PASS_CHAT_ID;
+  if (!isMainChat && !isPassChat) return;
 
   const text = String(message.text || "").trim();
   if (!text.startsWith("/msg")) return;
@@ -800,7 +828,7 @@ async function handleAdminMessage(message) {
 
   if (!orderId || !store.orders[orderId]) {
     await telegram("sendMessage", {
-      chat_id: CHAT_ID,
+      chat_id: chatId,
       text: "Commande introuvable. Reponds au message de commande avec /msg ton texte."
     });
     return;
@@ -808,7 +836,7 @@ async function handleAdminMessage(message) {
 
   if (!body) {
     await telegram("sendMessage", {
-      chat_id: CHAT_ID,
+      chat_id: chatId,
       text: "Message vide. Exemple : /msg Je suis en bas."
     });
     return;
@@ -816,7 +844,7 @@ async function handleAdminMessage(message) {
 
   const sent = await notifyClient(orderId, body);
   await telegram("sendMessage", {
-    chat_id: CHAT_ID,
+    chat_id: chatId,
     text: sent
       ? "Message envoye au client pour " + orderId + "."
       : "Client pas encore connecte au bot pour " + orderId + "."
@@ -847,7 +875,7 @@ async function handleClientMessage(message) {
   }
 
   const forwarded = await telegram("sendMessage", {
-    chat_id: CHAT_ID,
+    chat_id: order.assignedChatId || CHAT_ID,
     text: [
       "Message client - " + orderId,
       "Client site : " + (order.username || "inconnu"),
@@ -896,9 +924,7 @@ async function handleCallback(callback) {
     const passed = await telegram("sendMessage", {
       chat_id: PASS_CHAT_ID,
       text: formatPassedOrder(order),
-      reply_markup: {
-        inline_keyboard: [[{ text: "Je prends", callback_data: "take|" + orderId }]]
-      }
+      reply_markup: passedDeliveryKeyboard(orderId)
     });
 
     store.groupMessages[String(passed.message_id)] = orderId;
@@ -914,9 +940,20 @@ async function handleCallback(callback) {
   if (action === "take") {
     if (store.orders[orderId]) {
       store.orders[orderId].status = "Reprise par livreur";
+      store.orders[orderId].assignedChatId = callback.message && callback.message.chat ? callback.message.chat.id : "";
+      store.orders[orderId].assignedBy = clientLabel(callback);
       store.orders[orderId].statusUpdatedAt = new Date().toISOString();
       saveStore();
     }
+
+    if (callback.message) {
+      await telegram("editMessageReplyMarkup", {
+        chat_id: callback.message.chat.id,
+        message_id: callback.message.message_id,
+        reply_markup: takenDeliveryKeyboard(orderId)
+      }).catch(() => {});
+    }
+
     await telegram("sendMessage", {
       chat_id: CHAT_ID,
       text: "Commande " + orderId + " reprise par " + clientLabel(callback) + "."
@@ -969,7 +1006,7 @@ async function pollUpdates() {
       if (update.message && update.message.text) {
         if (String(update.message.text).startsWith("/start")) {
           await handleStart(update.message);
-        } else if (String(update.message.chat.id) === CHAT_ID) {
+        } else if (String(update.message.chat.id) === CHAT_ID || (PASS_CHAT_ID && String(update.message.chat.id) === PASS_CHAT_ID)) {
           await handleAdminMessage(update.message);
         } else {
           await handleClientMessage(update.message);
