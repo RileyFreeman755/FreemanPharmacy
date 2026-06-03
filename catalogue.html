@@ -3562,6 +3562,9 @@
           </div>
           <div class="owner-orders-list" id="ownerAccountsList"></div>
           <div style="height:12px;"></div>
+          <h3>Logs patron</h3>
+          <div class="owner-orders-list" id="ownerLogsList"></div>
+          <div style="height:12px;"></div>
           <div class="owner-orders-list" id="ownerOrdersList"></div>
         </section>
 
@@ -4139,6 +4142,7 @@
     const profileOrderHistoryEl = document.getElementById("profileOrderHistory");
     const ownerPanelEl = document.getElementById("ownerPanel");
     const ownerOrdersListEl = document.getElementById("ownerOrdersList");
+    const ownerLogsListEl = document.getElementById("ownerLogsList");
     const ownerOrderSearchEl = document.getElementById("ownerOrderSearch");
     const ownerStatusFilterEl = document.getElementById("ownerStatusFilter");
     const profilePhotoInputEl = document.getElementById("profilePhotoInput");
@@ -4162,6 +4166,8 @@
     let selectedAddressLabel = "";
     let ownerServerOrders = [];
     let ownerOrdersLoading = false;
+    let ownerAuditLogs = [];
+    let ownerLogsLoading = false;
     let userServerOrders = [];
     let userOrdersLoading = false;
     let productMediaByProduct = {};
@@ -4916,6 +4922,7 @@
       renderOrderHistory(userOrders);
       renderOwnerPanel();
       loadOwnerOrders();
+      loadOwnerLogs();
       loadUserOrders();
     }
 
@@ -4968,6 +4975,7 @@
       if (!isOwner) {
         ownerOrdersListEl.innerHTML = "";
         if (ownerAccountsListEl) ownerAccountsListEl.innerHTML = "";
+        if (ownerLogsListEl) ownerLogsListEl.innerHTML = "";
         return;
       }
 
@@ -4982,6 +4990,8 @@
             }).join("") + '</div>'
           : '<p class="history-empty">Aucun compte enregistre.</p>';
       }
+
+      renderOwnerLogs();
 
       const statusFilter = ownerStatusFilterEl ? ownerStatusFilterEl.value : "Tous";
       const searchQuery = ownerOrderSearchEl ? ownerOrderSearchEl.value.trim().toLowerCase() : "";
@@ -5009,6 +5019,87 @@
       ownerOrdersListEl.innerHTML = orders.map(function(order) {
         return renderOrderCard(order, true);
       }).join("");
+    }
+
+    function auditLabel(type) {
+      const labels = {
+        register_success: "Compte cree",
+        register_denied: "Inscription refusee",
+        register_blocked: "Inscription bloquee",
+        register_error: "Erreur inscription",
+        login_success: "Connexion",
+        login_denied: "Connexion refusee",
+        login_blocked: "Connexion bloquee",
+        login_error: "Erreur connexion",
+        logout: "Deconnexion",
+        profile_update: "Profil modifie",
+        order_created: "Commande creee",
+        order_status_update: "Statut commande",
+        stock_update: "Stock modifie",
+        media_upload: "Media ajoute"
+      };
+      return labels[type] || type || "Evenement";
+    }
+
+    function auditDetails(log) {
+      const details = log.details || {};
+      if (log.type === "order_created") {
+        return [details.orderId, details.total, details.contactApp].filter(Boolean).join(" - ");
+      }
+      if (log.type === "stock_update") {
+        return [details.productId, details.status].filter(Boolean).join(" - ");
+      }
+      if (log.type === "order_status_update") {
+        return [details.orderId, details.status].filter(Boolean).join(" - ");
+      }
+      if (log.type === "media_upload") {
+        return [details.productId, details.fileName, details.type].filter(Boolean).join(" - ");
+      }
+      if (details.reason) {
+        return "Raison : " + details.reason;
+      }
+      return "";
+    }
+
+    function renderOwnerLogs() {
+      if (!ownerLogsListEl) return;
+      if (!ownerAuditLogs.length) {
+        ownerLogsListEl.innerHTML = ownerLogsLoading
+          ? '<p class="history-empty">Chargement des logs...</p>'
+          : '<p class="history-empty">Aucun log pour le moment.</p>';
+        return;
+      }
+
+      ownerLogsListEl.innerHTML = ownerAuditLogs.slice(0, 80).map(function(log) {
+        const at = log.at ? new Date(log.at).toLocaleString("fr-FR") : "";
+        const details = auditDetails(log);
+        return '<div class="order-card">'
+          + '<strong>' + escapeHtml(auditLabel(log.type)) + '</strong>'
+          + '<div class="order-line">Compte : ' + escapeHtml(log.username || "inconnu") + '</div>'
+          + '<div class="order-line">Date : ' + escapeHtml(at) + '</div>'
+          + (details ? '<div class="order-line">' + escapeHtml(details) + '</div>' : '')
+          + '<div class="order-line">IP : ' + escapeHtml(log.ip || "") + '</div>'
+          + '</div>';
+      }).join("");
+    }
+
+    async function loadOwnerLogs() {
+      if (!isOwnerAccount(currentUsername) || ownerLogsLoading) return;
+      ownerLogsLoading = true;
+      renderOwnerLogs();
+
+      try {
+        const response = await fetch(apiUrl("/api/audit-logs?limit=120"), { credentials: "include" });
+        const data = await response.json();
+        if (response.ok && data.ok && Array.isArray(data.logs)) {
+          ownerAuditLogs = data.logs;
+        }
+      } catch (error) {
+        console.warn("Chargement logs impossible :", error);
+      } finally {
+        ownerLogsLoading = false;
+        renderOwnerLogs();
+      }
     }
 
     async function loadOwnerOrders() {

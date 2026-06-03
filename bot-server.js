@@ -11,6 +11,7 @@ const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || "kushrider75_bot";
 const STORE_PATH = path.join(__dirname, "bot-orders.json");
 const AUTH_PATH = path.join(__dirname, "auth-store.json");
 const PRODUCT_MEDIA_PATH = path.join(__dirname, "product-media.json");
+const AUDIT_LOG_PATH = path.join(__dirname, "audit-log.json");
 const ACCESS_CODE = process.env.KUSH_ACCESS_CODE || process.env.ACCESS_CODE || "";
 const OWNER_CODE = process.env.KUSH_OWNER_CODE || process.env.OWNER_CODE || "";
 const SUPABASE_URL = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
@@ -20,13 +21,16 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 365;
 const OWNER_USERNAMES = ["riley"];
 const MEDIA_BUCKET = "product-media";
 const MEDIA_MANIFEST_PATH = "manifest/product-media.json";
+const AUDIT_LOG_MANIFEST_PATH = "manifest/audit-log.json";
 const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
+const MAX_AUDIT_LOGS = 500;
 
 let lastUpdateId = 0;
 let store = loadStore();
 let authStore = loadAuthStore();
 let stockStore = {};
 let productMediaStore = loadProductMediaStore();
+let auditLogs = loadAuditLogs();
 const SESSION_SECRET = process.env.SESSION_SECRET || authStore.sessionSecret;
 
 function loadStore() {
@@ -86,6 +90,45 @@ function saveProductMediaStore() {
   if (USE_SUPABASE) {
     syncProductMediaManifest().catch((error) => console.error("[supabase] sync media:", error.message));
   }
+}
+
+function loadAuditLogs() {
+  try {
+    const loaded = JSON.parse(fs.readFileSync(AUDIT_LOG_PATH, "utf8"));
+    return Array.isArray(loaded) ? loaded : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function saveAuditLogs() {
+  auditLogs = auditLogs.slice(-MAX_AUDIT_LOGS);
+  fs.writeFileSync(AUDIT_LOG_PATH, JSON.stringify(auditLogs, null, 2));
+  if (USE_SUPABASE) {
+    syncAuditLogManifest().catch((error) => console.error("[supabase] sync audit:", error.message));
+  }
+}
+
+function clientInfo(req) {
+  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return {
+    ip: forwarded || String(req.socket && req.socket.remoteAddress || ""),
+    userAgent: String(req.headers["user-agent"] || "").slice(0, 180)
+  };
+}
+
+function addAuditLog(req, type, username, details) {
+  const info = clientInfo(req);
+  auditLogs.push({
+    id: Date.now() + "-" + crypto.randomBytes(4).toString("hex"),
+    at: new Date().toISOString(),
+    type: type,
+    username: username || "",
+    ip: info.ip,
+    userAgent: info.userAgent,
+    details: details || {}
+  });
+  saveAuditLogs();
 }
 
 function supabaseHeaders(extra) {
@@ -183,6 +226,15 @@ async function syncProductMediaManifest() {
   );
 }
 
+async function syncAuditLogManifest() {
+  if (!USE_SUPABASE) return;
+  await uploadSupabaseObject(
+    AUDIT_LOG_MANIFEST_PATH,
+    Buffer.from(JSON.stringify(auditLogs.slice(-MAX_AUDIT_LOGS), null, 2), "utf8"),
+    "application/json"
+  );
+}
+
 async function hydrateProductMediaFromSupabase() {
   if (!USE_SUPABASE) return;
   try {
@@ -195,6 +247,22 @@ async function hydrateProductMediaFromSupabase() {
   } catch (error) {
     if (!String(error.message || "").includes("404")) {
       console.error("[supabase] hydrate media:", error.message);
+    }
+  }
+}
+
+async function hydrateAuditLogsFromSupabase() {
+  if (!USE_SUPABASE) return;
+  try {
+    await ensureMediaBucket();
+    const response = await downloadSupabaseObject(AUDIT_LOG_MANIFEST_PATH);
+    const text = await response.text();
+    const loaded = JSON.parse(text || "[]");
+    auditLogs = Array.isArray(loaded) ? loaded.slice(-MAX_AUDIT_LOGS) : [];
+    fs.writeFileSync(AUDIT_LOG_PATH, JSON.stringify(auditLogs, null, 2));
+  } catch (error) {
+    if (!String(error.message || "").includes("404")) {
+      console.error("[supabase] hydrate audit:", error.message);
     }
   }
 }
@@ -476,7 +544,7 @@ function serveStatic(req, res) {
   }
 
   const filePath = path.resolve(__dirname, "." + pathname);
-  if (!filePath.startsWith(__dirname) || filePath === AUTH_PATH || filePath === STORE_PATH || filePath === PRODUCT_MEDIA_PATH || filePath.endsWith(".js") && path.basename(filePath) === "bot-server.js") {
+  if (!filePath.startsWith(__dirname) || filePath === AUTH_PATH || filePath === STORE_PATH || filePath === PRODUCT_MEDIA_PATH || filePath === AUDIT_LOG_PATH || filePath.endsWith(".js") && path.basename(filePath) === "bot-server.js") {
     sendJson(res, 403, { ok: false, error: "Acces refuse" });
     return;
   }
@@ -868,41 +936,49 @@ const server = http.createServer(async (req, res) => {
       const isOwner = isOwnerUsername(username);
 
       if (!ACCESS_CODE) {
+        addAuditLog(req, "register_blocked", username, { reason: "missing_access_code_config" });
         sendJson(res, 500, { ok: false, error: "Configure KUSH_ACCESS_CODE sur le serveur." });
         return;
       }
 
       if (isOwner && !OWNER_CODE) {
+        addAuditLog(req, "register_blocked", username, { reason: "missing_owner_code_config" });
         sendJson(res, 500, { ok: false, error: "Configure KUSH_OWNER_CODE sur le serveur." });
         return;
       }
 
       if (isOwner && accessCode !== OWNER_CODE) {
+        addAuditLog(req, "register_denied", username, { reason: "bad_owner_code" });
         sendJson(res, 403, { ok: false, error: "Pseudo reserve au patron." });
         return;
       }
 
       if (!isOwner && accessCode !== ACCESS_CODE) {
+        addAuditLog(req, "register_denied", username, { reason: "bad_access_code" });
         sendJson(res, 403, { ok: false, error: "Code d'acces incorrect." });
         return;
       }
 
       if (!username || username.length < 3) {
+        addAuditLog(req, "register_denied", username, { reason: "invalid_username" });
         sendJson(res, 400, { ok: false, error: "Choisis un pseudo d'au moins 3 caracteres." });
         return;
       }
 
       if (!password || password.length < 4) {
+        addAuditLog(req, "register_denied", username, { reason: "invalid_password" });
         sendJson(res, 400, { ok: false, error: "Le mot de passe doit faire au moins 4 caracteres." });
         return;
       }
 
       if (password !== confirmPassword) {
+        addAuditLog(req, "register_denied", username, { reason: "password_mismatch" });
         sendJson(res, 400, { ok: false, error: "Les mots de passe ne correspondent pas." });
         return;
       }
 
       if (authStore.users[username]) {
+        addAuditLog(req, "register_denied", username, { reason: "username_exists" });
         sendJson(res, 409, { ok: false, error: "Ce pseudo existe deja." });
         return;
       }
@@ -916,8 +992,10 @@ const server = http.createServer(async (req, res) => {
       };
       saveAuthStore();
       setSessionCookie(res, username, authStore.users[username].role);
+      addAuditLog(req, "register_success", username, { role: authStore.users[username].role });
       sendJson(res, 200, { ok: true, user: publicUser(username), memberCount: Object.keys(authStore.users).length });
     } catch (error) {
+      addAuditLog(req, "register_error", "", { error: error.message });
       sendJson(res, 500, { ok: false, error: error.message });
     }
     return;
@@ -932,31 +1010,37 @@ const server = http.createServer(async (req, res) => {
       const isOwner = isOwnerUsername(username);
 
       if (!ACCESS_CODE) {
+        addAuditLog(req, "login_blocked", username, { reason: "missing_access_code_config" });
         sendJson(res, 500, { ok: false, error: "Configure KUSH_ACCESS_CODE sur le serveur." });
         return;
       }
 
       if (!accessCode) {
+        addAuditLog(req, "login_denied", username, { reason: "missing_access_code" });
         sendJson(res, 400, { ok: false, error: "Entre le code d'acces." });
         return;
       }
 
       if (isOwner && !OWNER_CODE) {
+        addAuditLog(req, "login_blocked", username, { reason: "missing_owner_code_config" });
         sendJson(res, 500, { ok: false, error: "Configure KUSH_OWNER_CODE sur le serveur." });
         return;
       }
 
       if (isOwner && accessCode !== OWNER_CODE) {
+        addAuditLog(req, "login_denied", username, { reason: "bad_owner_code" });
         sendJson(res, 403, { ok: false, error: "Code patron incorrect." });
         return;
       }
 
       if (!isOwner && accessCode !== ACCESS_CODE) {
+        addAuditLog(req, "login_denied", username, { reason: "bad_access_code" });
         sendJson(res, 403, { ok: false, error: "Code d'acces incorrect." });
         return;
       }
 
       if (!username || !password || !verifyPassword(password, authStore.users[username])) {
+        addAuditLog(req, "login_denied", username, { reason: "bad_credentials" });
         sendJson(res, 401, { ok: false, error: "Pseudo ou mot de passe incorrect." });
         return;
       }
@@ -967,15 +1051,19 @@ const server = http.createServer(async (req, res) => {
       }
 
       setSessionCookie(res, username, authStore.users[username].role);
+      addAuditLog(req, "login_success", username, { role: authStore.users[username].role });
       sendJson(res, 200, { ok: true, user: publicUser(username), memberCount: Object.keys(authStore.users).length });
     } catch (error) {
+      addAuditLog(req, "login_error", "", { error: error.message });
       sendJson(res, 500, { ok: false, error: error.message });
     }
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/auth/logout") {
+    const session = getSession(req);
     clearSessionCookie(req, res);
+    addAuditLog(req, "logout", session ? session.username : "", {});
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -998,6 +1086,7 @@ const server = http.createServer(async (req, res) => {
 
       authStore.users[session.username].avatar = avatar;
       saveAuthStore();
+      addAuditLog(req, "profile_update", session.username, { avatar: Boolean(avatar) });
       sendJson(res, 200, { ok: true, user: publicUser(session.username) });
     } catch (error) {
       sendJson(res, 500, { ok: false, error: error.message });
@@ -1033,6 +1122,21 @@ const server = http.createServer(async (req, res) => {
     } catch (error) {
       sendJson(res, 404, { ok: false, error: "Media introuvable" });
     }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/audit-logs") {
+    const session = getSession(req);
+    if (!isOwnerSession(session)) {
+      sendJson(res, 403, { ok: false, error: "Acces patron requis" });
+      return;
+    }
+
+    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") || 100)));
+    sendJson(res, 200, {
+      ok: true,
+      logs: auditLogs.slice(-limit).reverse()
+    });
     return;
   }
 
@@ -1089,6 +1193,12 @@ const server = http.createServer(async (req, res) => {
       };
       productMediaStore[productId].push(media);
       saveProductMediaStore();
+      addAuditLog(req, "media_upload", session.username, {
+        productId: productId,
+        fileName: fileName,
+        type: media.type,
+        size: bytes.length
+      });
 
       sendJson(res, 200, { ok: true, media: media, mediaByProduct: productMediaStore });
     } catch (error) {
@@ -1158,6 +1268,7 @@ const server = http.createServer(async (req, res) => {
       store.orders[orderId].status = status;
       store.orders[orderId].statusUpdatedAt = new Date().toISOString();
       saveStore();
+      addAuditLog(req, "order_status_update", session.username, { orderId: orderId, status: status });
       sendJson(res, 200, { ok: true, order: store.orders[orderId] });
     } catch (error) {
       sendJson(res, 500, { ok: false, error: error.message });
@@ -1193,6 +1304,7 @@ const server = http.createServer(async (req, res) => {
 
       stockStore[productId] = status;
       await syncStockToSupabase(productId);
+      addAuditLog(req, "stock_update", session.username, { productId: productId, status: status });
       sendJson(res, 200, { ok: true, stock: stockStore });
     } catch (error) {
       sendJson(res, 500, { ok: false, error: error.message });
@@ -1221,6 +1333,12 @@ const server = http.createServer(async (req, res) => {
         createdAt: new Date().toISOString()
       });
       saveStore();
+      addAuditLog(req, "order_created", session && session.username ? session.username : order.username, {
+        orderId: order.id,
+        total: order.total || "",
+        itemCount: Array.isArray(order.items) ? order.items.length : 0,
+        contactApp: order.contactApp || ""
+      });
 
       const result = await telegram("sendMessage", {
         chat_id: CHAT_ID,
@@ -1255,6 +1373,7 @@ async function startServer() {
     try {
       await hydrateFromSupabase();
       await hydrateProductMediaFromSupabase();
+      await hydrateAuditLogsFromSupabase();
       console.log("Supabase connecte: donnees chargees.");
     } catch (error) {
       console.error("[supabase] demarrage:", error.message);
