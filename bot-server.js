@@ -45,6 +45,9 @@ function decodeBase64Url(value) {
 }
 
 function supabaseKeyRole() {
+  if (String(SUPABASE_SERVICE_ROLE_KEY || "").startsWith("sb_secret_")) {
+    return "secret";
+  }
   const parts = String(SUPABASE_SERVICE_ROLE_KEY || "").split(".");
   if (parts.length !== 3) return "";
   try {
@@ -198,10 +201,10 @@ function publicUploadError(error) {
   const message = String(error && error.message || "");
   const role = supabaseKeyRole();
   if (!role) {
-    return "Configuration Supabase invalide. SUPABASE_SERVICE_ROLE_KEY doit etre la cle service_role complete.";
+    return "Configuration Supabase invalide. SUPABASE_SERVICE_ROLE_KEY doit etre la cle secret ou service_role complete.";
   }
-  if (role !== "service_role") {
-    return "Configuration Supabase invalide. Utilise la cle service_role, pas la cle " + role + ".";
+  if (role !== "service_role" && role !== "secret") {
+    return "Configuration Supabase invalide. Utilise la cle secret/service_role, pas la cle " + role + ".";
   }
   if (isSupabaseAuthError(error)) {
     return "Configuration Supabase invalide. Verifie SUPABASE_SERVICE_ROLE_KEY sur Render.";
@@ -1613,7 +1616,7 @@ async function startServer() {
   if (USE_SUPABASE) {
     const role = supabaseKeyRole();
     if (role !== "service_role") {
-      console.warn("[supabase] SUPABASE_SERVICE_ROLE_KEY invalide: role detecte = " + (role || "inconnu") + ". Utilise la cle service_role complete.");
+    console.warn("[supabase] SUPABASE_SERVICE_ROLE_KEY invalide: role detecte = " + (role || "inconnu") + ". Utilise la cle secret/service_role complete.");
     }
     try {
       await hydrateFromSupabase();
