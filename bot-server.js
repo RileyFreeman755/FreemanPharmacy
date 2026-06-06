@@ -34,6 +34,27 @@ let productMediaStore = loadProductMediaStore();
 let auditLogs = loadAuditLogs();
 const SESSION_SECRET = process.env.SESSION_SECRET || authStore.sessionSecret;
 
+function decodeBase64Url(value) {
+  try {
+    const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+    return Buffer.from(padded, "base64").toString("utf8");
+  } catch (error) {
+    return "";
+  }
+}
+
+function supabaseKeyRole() {
+  const parts = String(SUPABASE_SERVICE_ROLE_KEY || "").split(".");
+  if (parts.length !== 3) return "";
+  try {
+    const payload = JSON.parse(decodeBase64Url(parts[1]) || "{}");
+    return String(payload.role || "");
+  } catch (error) {
+    return "";
+  }
+}
+
 function loadStore() {
   try {
     return JSON.parse(fs.readFileSync(STORE_PATH, "utf8"));
@@ -170,14 +191,31 @@ async function supabaseRequest(pathname, options) {
 
 function isSupabaseAuthError(error) {
   const message = String(error && error.message || "");
-  return /Invalid Compact JWS|Unauthorized|JWT|service_role|api key/i.test(message);
+  return /Invalid Compact JWS|Unauthorized|JWT|service_role|api key|invalid signature|invalid token/i.test(message);
 }
 
 function publicUploadError(error) {
+  const message = String(error && error.message || "");
+  const role = supabaseKeyRole();
+  if (!role) {
+    return "Configuration Supabase invalide. SUPABASE_SERVICE_ROLE_KEY doit etre la cle service_role complete.";
+  }
+  if (role !== "service_role") {
+    return "Configuration Supabase invalide. Utilise la cle service_role, pas la cle " + role + ".";
+  }
   if (isSupabaseAuthError(error)) {
     return "Configuration Supabase invalide. Verifie SUPABASE_SERVICE_ROLE_KEY sur Render.";
   }
-  return "Upload impossible pour le moment. Reessaie dans quelques instants.";
+  if (/fetch failed|getaddrinfo|ENOTFOUND|ECONNREFUSED|network/i.test(message)) {
+    return "Connexion Supabase impossible. Verifie SUPABASE_URL sur Render.";
+  }
+  if (/bucket|storage|403|401|permission|row-level|policy|RLS/i.test(message)) {
+    return "Supabase Storage refuse l'upload. Verifie le bucket product-media et la cle service_role.";
+  }
+  if (/Payload Too Large|413|body|size/i.test(message)) {
+    return "Fichier trop lourd pour le serveur. Essaie un media plus leger.";
+  }
+  return "Upload impossible pour le moment. Consulte les logs Render: [media upload].";
 }
 
 async function ensureMediaBucket() {
@@ -1573,6 +1611,10 @@ const server = http.createServer(async (req, res) => {
 
 async function startServer() {
   if (USE_SUPABASE) {
+    const role = supabaseKeyRole();
+    if (role !== "service_role") {
+      console.warn("[supabase] SUPABASE_SERVICE_ROLE_KEY invalide: role detecte = " + (role || "inconnu") + ". Utilise la cle service_role complete.");
+    }
     try {
       await hydrateFromSupabase();
       await hydrateProductMediaFromSupabase();
