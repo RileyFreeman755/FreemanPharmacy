@@ -4550,7 +4550,9 @@
         renderGallery();
         if (adminProductMediaStatusEl) adminProductMediaStatusEl.textContent = "Media ajoute au produit.";
       } catch (error) {
-        if (adminProductMediaStatusEl) adminProductMediaStatusEl.textContent = error.message;
+        if (adminProductMediaStatusEl) {
+          adminProductMediaStatusEl.textContent = error.message || "Upload impossible pour le moment.";
+        }
       } finally {
         if (adminProductMediaButtonEl) adminProductMediaButtonEl.disabled = false;
       }
