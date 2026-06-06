@@ -143,6 +143,7 @@ function supabaseHeaders(extra) {
 
 function supabaseStorageHeaders(extra) {
   return Object.assign({
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
     Authorization: "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -165,6 +166,18 @@ async function supabaseRequest(pathname, options) {
   if (response.status === 204) return null;
   const text = await response.text();
   return text ? JSON.parse(text) : null;
+}
+
+function isSupabaseAuthError(error) {
+  const message = String(error && error.message || "");
+  return /Invalid Compact JWS|Unauthorized|JWT|service_role|api key/i.test(message);
+}
+
+function publicUploadError(error) {
+  if (isSupabaseAuthError(error)) {
+    return "Configuration Supabase invalide. Verifie SUPABASE_SERVICE_ROLE_KEY sur Render.";
+  }
+  return "Upload impossible pour le moment. Reessaie dans quelques instants.";
 }
 
 async function ensureMediaBucket() {
@@ -1391,7 +1404,8 @@ const server = http.createServer(async (req, res) => {
 
       sendJson(res, 200, { ok: true, media: media, mediaByProduct: productMediaStore });
     } catch (error) {
-      sendJson(res, 500, { ok: false, error: error.message });
+      console.error("[media upload]", error.message);
+      sendJson(res, 500, { ok: false, error: publicUploadError(error) });
     }
     return;
   }
