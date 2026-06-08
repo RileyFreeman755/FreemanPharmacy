@@ -12,6 +12,7 @@ const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || "kushrider75_bot";
 const STORE_PATH = path.join(__dirname, "bot-orders.json");
 const AUTH_PATH = path.join(__dirname, "auth-store.json");
 const PRODUCT_MEDIA_PATH = path.join(__dirname, "product-media.json");
+const PRODUCT_CATALOG_PATH = path.join(__dirname, "product-catalog.json");
 const AUDIT_LOG_PATH = path.join(__dirname, "audit-log.json");
 const ACCESS_CODE = process.env.KUSH_ACCESS_CODE || process.env.ACCESS_CODE || "";
 const OWNER_CODE = process.env.KUSH_OWNER_CODE || process.env.OWNER_CODE || "";
@@ -31,6 +32,7 @@ let store = loadStore();
 let authStore = loadAuthStore();
 let stockStore = {};
 let productMediaStore = loadProductMediaStore();
+let productCatalogStore = loadProductCatalogStore();
 let auditLogs = loadAuditLogs();
 const SESSION_SECRET = process.env.SESSION_SECRET || authStore.sessionSecret;
 
@@ -117,6 +119,21 @@ function saveProductMediaStore() {
   }
 }
 
+function loadProductCatalogStore() {
+  try {
+    const loaded = JSON.parse(fs.readFileSync(PRODUCT_CATALOG_PATH, "utf8"));
+    return {
+      products: Array.isArray(loaded.products) ? loaded.products : []
+    };
+  } catch (error) {
+    return { products: [] };
+  }
+}
+
+function saveProductCatalogStore() {
+  fs.writeFileSync(PRODUCT_CATALOG_PATH, JSON.stringify(productCatalogStore, null, 2));
+}
+
 function loadAuditLogs() {
   try {
     const loaded = JSON.parse(fs.readFileSync(AUDIT_LOG_PATH, "utf8"));
@@ -157,21 +174,27 @@ function addAuditLog(req, type, username, details) {
 }
 
 function supabaseHeaders(extra) {
-  return Object.assign({
+  const headers = {
     apikey: SUPABASE_SERVICE_ROLE_KEY,
-    Authorization: "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
     "Content-Type": "application/json",
     Accept: "application/json"
-  }, extra || {});
+  };
+  if (!String(SUPABASE_SERVICE_ROLE_KEY || "").startsWith("sb_")) {
+    headers.Authorization = "Bearer " + SUPABASE_SERVICE_ROLE_KEY;
+  }
+  return Object.assign(headers, extra || {});
 }
 
 function supabaseStorageHeaders(extra) {
-  return Object.assign({
+  const headers = {
     apikey: SUPABASE_SERVICE_ROLE_KEY,
-    Authorization: "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
     "Content-Type": "application/json",
     Accept: "application/json"
-  }, extra || {});
+  };
+  if (!String(SUPABASE_SERVICE_ROLE_KEY || "").startsWith("sb_")) {
+    headers.Authorization = "Bearer " + SUPABASE_SERVICE_ROLE_KEY;
+  }
+  return Object.assign(headers, extra || {});
 }
 
 function encodeStoragePath(objectPath) {
@@ -549,10 +572,64 @@ function clearSessionCookie(req, res) {
   res.setHeader("Set-Cookie", "kush75_session_id=; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=0");
 }
 
-function isOwnerSession(session) {
+function isAdminSession(session) {
   if (!session || !session.username) return false;
   const user = authStore.users[session.username] || {};
-  return user.role === "owner";
+  return user.role === "owner" || user.role === "admin";
+}
+
+function normalizeProductOption(option) {
+  const label = String(option && option.label || "").trim().slice(0, 24);
+  let price = String(option && option.price || "").trim().slice(0, 32);
+  if (price && !/eur|€$/i.test(price)) {
+    price += " EUR";
+  }
+  return label && price ? { label: label, price: price } : null;
+}
+
+function normalizeCatalogProduct(product) {
+  const id = String(product && product.id || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 64);
+  const name = String(product && product.name || "").trim().slice(0, 80);
+  const category = String(product && product.category || "HASH").trim().slice(0, 40);
+  const collection = String(product && product.collection || category).trim().slice(0, 60);
+  const image = String(product && product.image || "").trim().slice(0, 180);
+  const options = (Array.isArray(product && product.options) ? product.options : [])
+    .map(normalizeProductOption)
+    .filter(Boolean)
+    .slice(0, 12);
+
+  if (!id || !name || !image || !options.length) {
+    throw new Error("Produit incomplet : id, nom, image et prix requis.");
+  }
+
+  return {
+    id: id,
+    name: name,
+    category: category,
+    collection: collection,
+    image: image,
+    gallery: Array.isArray(product.gallery) && product.gallery.length ? product.gallery.map(function(item) {
+      return String(item || "").trim().slice(0, 180);
+    }).filter(Boolean).slice(0, 8) : [image],
+    badge: String(product && product.badge || category).trim().slice(0, 40),
+    type: String(product && product.type || collection).trim().slice(0, 60),
+    note: String(product && product.note || "").trim().slice(0, 80),
+    description: String(product && product.description || "").trim().slice(0, 500),
+    details: product && product.details && typeof product.details === "object" ? product.details : {
+      texture: "",
+      origine: "",
+      profil: "",
+      dispo: "Disponible"
+    },
+    options: options,
+    updatedAt: new Date().toISOString()
+  };
 }
 
 function sendJson(res, status, payload) {
@@ -599,7 +676,7 @@ function serveStatic(req, res) {
   }
 
   const filePath = path.resolve(__dirname, "." + pathname);
-  if (!filePath.startsWith(__dirname) || filePath === AUTH_PATH || filePath === STORE_PATH || filePath === PRODUCT_MEDIA_PATH || filePath === AUDIT_LOG_PATH || filePath.endsWith(".js") && path.basename(filePath) === "bot-server.js") {
+  if (!filePath.startsWith(__dirname) || filePath === AUTH_PATH || filePath === STORE_PATH || filePath === PRODUCT_MEDIA_PATH || filePath === PRODUCT_CATALOG_PATH || filePath === AUDIT_LOG_PATH || filePath.endsWith(".js") && path.basename(filePath) === "bot-server.js") {
     sendJson(res, 403, { ok: false, error: "Acces refuse" });
     return;
   }
@@ -1290,8 +1367,8 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/auth/reset-password") {
     const session = getSession(req);
-    if (!isOwnerSession(session)) {
-      sendJson(res, 403, { ok: false, error: "Acces patron requis" });
+    if (!isAdminSession(session)) {
+      sendJson(res, 403, { ok: false, error: "Acces admin requis" });
       return;
     }
 
@@ -1325,8 +1402,8 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/users") {
     const session = getSession(req);
-    if (!isOwnerSession(session)) {
-      sendJson(res, 403, { ok: false, error: "Acces patron requis" });
+    if (!isAdminSession(session)) {
+      sendJson(res, 403, { ok: false, error: "Acces admin requis" });
       return;
     }
 
@@ -1342,6 +1419,43 @@ const server = http.createServer(async (req, res) => {
       ok: true,
       media: productMediaStore
     });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/products") {
+    sendJson(res, 200, {
+      ok: true,
+      products: productCatalogStore.products || []
+    });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/products") {
+    const session = getSession(req);
+    if (!isAdminSession(session)) {
+      sendJson(res, 403, { ok: false, error: "Acces admin requis" });
+      return;
+    }
+
+    try {
+      const body = JSON.parse(await readBody(req));
+      const product = normalizeCatalogProduct(body.product || {});
+      const products = Array.isArray(productCatalogStore.products) ? productCatalogStore.products : [];
+      const index = products.findIndex(function(item) {
+        return item.id === product.id;
+      });
+      if (index === -1) {
+        products.push(product);
+      } else {
+        products[index] = product;
+      }
+      productCatalogStore.products = products;
+      saveProductCatalogStore();
+      addAuditLog(req, index === -1 ? "product_created" : "product_updated", session.username, { productId: product.id });
+      sendJson(res, 200, { ok: true, product: product, products: productCatalogStore.products });
+    } catch (error) {
+      sendJson(res, 400, { ok: false, error: error.message });
+    }
     return;
   }
 
@@ -1370,8 +1484,8 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/audit-logs") {
     const session = getSession(req);
-    if (!isOwnerSession(session)) {
-      sendJson(res, 403, { ok: false, error: "Acces patron requis" });
+    if (!isAdminSession(session)) {
+      sendJson(res, 403, { ok: false, error: "Acces admin requis" });
       return;
     }
 
@@ -1385,8 +1499,8 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/product-media") {
     const session = getSession(req);
-    if (!isOwnerSession(session)) {
-      sendJson(res, 403, { ok: false, error: "Acces patron requis" });
+    if (!isAdminSession(session)) {
+      sendJson(res, 403, { ok: false, error: "Acces admin requis" });
       return;
     }
 
@@ -1453,8 +1567,8 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/api/orders") {
     const session = getSession(req);
-    if (!isOwnerSession(session)) {
-      sendJson(res, 403, { ok: false, error: "Acces patron requis" });
+    if (!isAdminSession(session)) {
+      sendJson(res, 403, { ok: false, error: "Acces admin requis" });
       return;
     }
 
@@ -1489,8 +1603,8 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/order/status") {
     const session = getSession(req);
-    if (!isOwnerSession(session)) {
-      sendJson(res, 403, { ok: false, error: "Acces patron requis" });
+    if (!isAdminSession(session)) {
+      sendJson(res, 403, { ok: false, error: "Acces admin requis" });
       return;
     }
 
@@ -1530,8 +1644,8 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/api/stock") {
     const session = getSession(req);
-    if (!isOwnerSession(session)) {
-      sendJson(res, 403, { ok: false, error: "Acces patron requis" });
+    if (!isAdminSession(session)) {
+      sendJson(res, 403, { ok: false, error: "Acces admin requis" });
       return;
     }
 

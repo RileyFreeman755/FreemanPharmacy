@@ -1685,6 +1685,73 @@
       white-space: nowrap;
     }
 
+    .admin-product-panel {
+      display: grid;
+      gap: 10px;
+    }
+
+    .admin-product-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .admin-product-field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .admin-product-field.full {
+      grid-column: 1 / -1;
+    }
+
+    .admin-product-field span {
+      color: rgba(224, 242, 254, 0.68);
+      font-size: 0.72rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .admin-product-input,
+    .admin-product-textarea {
+      width: 100%;
+      border: 1px solid rgba(125, 211, 252, 0.18);
+      border-radius: 14px;
+      background: rgba(2, 8, 23, 0.72);
+      color: #f8fbff;
+      padding: 11px 12px;
+      font: inherit;
+      font-size: 0.9rem;
+      outline: none;
+    }
+
+    .admin-product-textarea {
+      min-height: 82px;
+      resize: vertical;
+      line-height: 1.45;
+    }
+
+    .admin-product-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .admin-product-status {
+      min-height: 18px;
+      color: rgba(224, 242, 254, 0.72);
+      font-size: 0.8rem;
+      line-height: 1.45;
+    }
+
+    @media (max-width: 520px) {
+      .admin-product-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .owner-panel {
       display: none;
     }
@@ -3568,6 +3635,52 @@
 
         <section class="profile-section owner-panel" id="ownerPanel">
           <h3>Vue patron - toutes les commandes</h3>
+          <div class="admin-product-panel">
+            <label class="admin-product-field full">
+              <span>Produit a modifier</span>
+              <select id="adminProductSelect" class="admin-product-input"></select>
+            </label>
+            <div class="admin-product-grid">
+              <label class="admin-product-field">
+                <span>ID</span>
+                <input id="adminProductId" class="admin-product-input" type="text" placeholder="dry-73u">
+              </label>
+              <label class="admin-product-field">
+                <span>Nom</span>
+                <input id="adminProductName" class="admin-product-input" type="text" placeholder="Dry 73u">
+              </label>
+              <label class="admin-product-field">
+                <span>Categorie</span>
+                <input id="adminProductCategory" class="admin-product-input" type="text" placeholder="HASH">
+              </label>
+              <label class="admin-product-field">
+                <span>Collection</span>
+                <input id="adminProductCollection" class="admin-product-input" type="text" placeholder="HASH">
+              </label>
+              <label class="admin-product-field">
+                <span>Badge</span>
+                <input id="adminProductBadge" class="admin-product-input" type="text" placeholder="Dry sift">
+              </label>
+              <label class="admin-product-field">
+                <span>Image</span>
+                <input id="adminProductImage" class="admin-product-input" type="text" placeholder="DRY 73U.png">
+              </label>
+              <label class="admin-product-field full">
+                <span>Description</span>
+                <textarea id="adminProductDescription" class="admin-product-textarea" placeholder="Description avec emojis"></textarea>
+              </label>
+              <label class="admin-product-field full">
+                <span>Prix</span>
+                <textarea id="adminProductOptions" class="admin-product-textarea" placeholder="5g = 50 EUR&#10;10g = 80 EUR"></textarea>
+              </label>
+            </div>
+            <div class="admin-product-actions">
+              <button class="admin-mini-btn" type="button" onclick="saveAdminProduct()">Sauver produit</button>
+              <button class="admin-mini-btn" type="button" onclick="startNewAdminProduct()">Nouveau</button>
+            </div>
+            <div class="admin-product-status" id="adminProductStatus"></div>
+          </div>
+          <div style="height:12px;"></div>
           <div class="order-tools">
             <input id="ownerOrderSearch" class="order-tool-input" type="search" placeholder="Rechercher client, commande, adresse">
             <select id="ownerStatusFilter" class="order-tool-input">
@@ -4144,6 +4257,9 @@
         options: [{ label: "1p", price: "10 EUR" }, { label: "5p", price: "50 EUR" }]
       },
     ];
+    const baseProducts = products.map(function(product) {
+      return JSON.parse(JSON.stringify(product));
+    });
 
     const filters = [
       { label: "Tous", value: "Tous", key: "Tous" },
@@ -4209,6 +4325,16 @@
     const ownerStatusFilterEl = document.getElementById("ownerStatusFilter");
     const profilePhotoInputEl = document.getElementById("profilePhotoInput");
     const ownerAccountsListEl = document.getElementById("ownerAccountsList");
+    const adminProductSelectEl = document.getElementById("adminProductSelect");
+    const adminProductIdEl = document.getElementById("adminProductId");
+    const adminProductNameEl = document.getElementById("adminProductName");
+    const adminProductCategoryEl = document.getElementById("adminProductCategory");
+    const adminProductCollectionEl = document.getElementById("adminProductCollection");
+    const adminProductBadgeEl = document.getElementById("adminProductBadge");
+    const adminProductImageEl = document.getElementById("adminProductImage");
+    const adminProductDescriptionEl = document.getElementById("adminProductDescription");
+    const adminProductOptionsEl = document.getElementById("adminProductOptions");
+    const adminProductStatusEl = document.getElementById("adminProductStatus");
     const catalogViews = Array.from(document.querySelectorAll(".catalog-view"));
     const dockButtons = {
       filters: document.getElementById("dockFilters"),
@@ -4235,6 +4361,7 @@
     let userServerOrders = [];
     let userOrdersLoading = false;
     let productMediaByProduct = {};
+    let adminCatalogProducts = [];
 
     function readJson(key, fallback) {
       try {
@@ -4322,6 +4449,150 @@
       }
     }
 
+    function mergeAdminProducts(extraProducts) {
+      const byId = {};
+      baseProducts.forEach(function(product) {
+        byId[product.id] = JSON.parse(JSON.stringify(product));
+      });
+      (Array.isArray(extraProducts) ? extraProducts : []).forEach(function(product) {
+        if (product && product.id) {
+          byId[product.id] = Object.assign({}, byId[product.id] || {}, product);
+        }
+      });
+      products.length = 0;
+      Object.keys(byId).forEach(function(id) {
+        products.push(byId[id]);
+      });
+      visibleProducts = products.slice();
+    }
+
+    async function loadAdminCatalogProducts() {
+      try {
+        const response = await fetch(apiUrl("/api/products"), { credentials: "include" });
+        const data = await response.json();
+        if (response.ok && data.ok && Array.isArray(data.products)) {
+          adminCatalogProducts = data.products;
+          mergeAdminProducts(adminCatalogProducts);
+          renderProducts();
+          renderProfileStats();
+          renderAdminProductSelect();
+        }
+      } catch (error) {
+        console.warn("Chargement produits admin impossible :", error);
+      }
+    }
+
+    function productToOptionLines(product) {
+      return (product.options || []).map(function(option) {
+        return option.label + " = " + option.price;
+      }).join("\n");
+    }
+
+    function parseAdminOptionLines(value) {
+      return String(value || "").split(/\n+/).map(function(line) {
+        const parts = line.split(/=|→|:/);
+        const label = String(parts.shift() || "").trim();
+        const price = String(parts.join(" ") || "").trim();
+        return label && price ? { label: label, price: price } : null;
+      }).filter(Boolean);
+    }
+
+    function fillAdminProductForm(product) {
+      if (!product) return;
+      if (adminProductIdEl) adminProductIdEl.value = product.id || "";
+      if (adminProductNameEl) adminProductNameEl.value = product.name || "";
+      if (adminProductCategoryEl) adminProductCategoryEl.value = product.category || "HASH";
+      if (adminProductCollectionEl) adminProductCollectionEl.value = product.collection || product.category || "HASH";
+      if (adminProductBadgeEl) adminProductBadgeEl.value = product.badge || product.category || "";
+      if (adminProductImageEl) adminProductImageEl.value = product.image || "";
+      if (adminProductDescriptionEl) adminProductDescriptionEl.value = product.description || "";
+      if (adminProductOptionsEl) adminProductOptionsEl.value = productToOptionLines(product);
+      if (adminProductStatusEl) adminProductStatusEl.textContent = "";
+    }
+
+    function renderAdminProductSelect() {
+      if (!adminProductSelectEl) return;
+      adminProductSelectEl.innerHTML = '<option value="">Choisir un produit</option>' + products.map(function(product) {
+        return '<option value="' + escapeHtml(product.id) + '">' + escapeHtml(product.name) + ' - ' + escapeHtml(product.id) + '</option>';
+      }).join("");
+    }
+
+    function startNewAdminProduct() {
+      if (adminProductSelectEl) adminProductSelectEl.value = "";
+      fillAdminProductForm({
+        id: "",
+        name: "",
+        category: "HASH",
+        collection: "HASH",
+        badge: "Premium",
+        type: "HASH",
+        note: "",
+        image: "",
+        description: "",
+        options: [{ label: "5g", price: "50 EUR" }]
+      });
+    }
+
+    function adminProductFromForm() {
+      const id = (adminProductIdEl && adminProductIdEl.value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "");
+      const name = adminProductNameEl ? adminProductNameEl.value.trim() : "";
+      const category = adminProductCategoryEl ? adminProductCategoryEl.value.trim() : "HASH";
+      const collection = adminProductCollectionEl ? adminProductCollectionEl.value.trim() : category;
+      const image = adminProductImageEl ? adminProductImageEl.value.trim() : "";
+      return {
+        id: id,
+        name: name,
+        category: category || "HASH",
+        collection: collection || category || "HASH",
+        image: image,
+        gallery: image ? [image] : [],
+        badge: adminProductBadgeEl ? adminProductBadgeEl.value.trim() : category,
+        type: collection || category || "HASH",
+        note: "",
+        description: adminProductDescriptionEl ? adminProductDescriptionEl.value.trim() : "",
+        details: { texture: "", origine: "", profil: "", dispo: "Disponible" },
+        options: parseAdminOptionLines(adminProductOptionsEl ? adminProductOptionsEl.value : "")
+      };
+    }
+
+    async function saveAdminProduct() {
+      if (!isOwnerAccount(currentUsername)) return;
+      try {
+        const product = adminProductFromForm();
+        if (!product.id || !product.name || !product.image || !product.options.length) {
+          throw new Error("Remplis au minimum ID, nom, image et prix.");
+        }
+        if (adminProductStatusEl) adminProductStatusEl.textContent = "Sauvegarde...";
+        const response = await fetch(apiUrl("/api/products"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ product: product })
+        });
+        const data = await response.json().catch(function() {
+          return { ok: false, error: "Sauvegarde impossible." };
+        });
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || "Sauvegarde impossible.");
+        }
+        adminCatalogProducts = data.products || adminCatalogProducts;
+        mergeAdminProducts(adminCatalogProducts);
+        renderProducts();
+        renderProfileStats();
+        renderAdminProductSelect();
+        if (adminProductSelectEl) adminProductSelectEl.value = data.product.id;
+        fillAdminProductForm(data.product);
+        if (adminProductStatusEl) adminProductStatusEl.textContent = "Produit sauvegarde.";
+      } catch (error) {
+        if (adminProductStatusEl) adminProductStatusEl.textContent = error.message;
+      }
+    }
+
     function currentUserOrders() {
       return userServerOrders.length ? userServerOrders : getOrders().filter(function(order) {
         return order.username === currentUsername;
@@ -4330,7 +4601,7 @@
 
     function isOwnerAccount(username) {
       const account = getAccounts()[username] || {};
-      return account.role === "owner" || ownerUsers.includes(String(username || "").trim().toLowerCase());
+      return account.role === "owner" || account.role === "admin" || ownerUsers.includes(String(username || "").trim().toLowerCase());
     }
 
     function getCurrentAccount() {
@@ -5054,6 +5325,8 @@
         return;
       }
 
+      renderAdminProductSelect();
+
       if (ownerAccountsListEl) {
         const accounts = getAccounts();
         const accountNames = ownerServerUsers.length ? ownerServerUsers.map(function(user) { return user.username; }) : Object.keys(accounts);
@@ -5619,6 +5892,16 @@
     if (ownerStatusFilterEl) {
       ownerStatusFilterEl.addEventListener("change", renderOwnerPanel);
     }
+    if (adminProductSelectEl) {
+      adminProductSelectEl.addEventListener("change", function(event) {
+        const product = products.find(function(item) {
+          return item.id === event.target.value;
+        });
+        if (product) {
+          fillAdminProductForm(product);
+        }
+      });
+    }
     const cartAddressInput = document.getElementById("cartAddress");
     if (cartAddressInput) {
       cartAddressInput.addEventListener("input", function(event) {
@@ -5688,6 +5971,7 @@
     renderCategoryHeaders();
     renderProducts();
     refreshCurrentAccountFromServer();
+    loadAdminCatalogProducts();
     loadProductMedia();
     loadStockStatuses();
     updateDeliveryNote();
@@ -5698,6 +5982,8 @@
     window.updateOrderStatus = updateOrderStatus;
     window.setProductAvailability = setProductAvailability;
     window.uploadCurrentProductMedia = uploadCurrentProductMedia;
+    window.saveAdminProduct = saveAdminProduct;
+    window.startNewAdminProduct = startNewAdminProduct;
     window.resetClientPassword = resetClientPassword;
   </script>
   <script>
