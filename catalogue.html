@@ -4074,6 +4074,20 @@
         options: [{ label: "10g", price: "50 EUR" }, { label: "25g", price: "110 EUR" }, { label: "50g", price: "160 EUR" }, { label: "100g", price: "280 EUR" }]
       },
       {
+        id: "dry-73u",
+        name: "Dry 73u",
+        category: "HASH",
+        collection: "HASH",
+        image: "DRY 73U.png",
+        gallery: ["DRY 73U.png"],
+        badge: "Dry sift",
+        type: "HASH",
+        note: "73u",
+        description: "Dry 73u ajoute au catalogue avec une presentation premium et plusieurs formats disponibles.",
+        details: { texture: "Dry", origine: "Premium", profil: "73u", dispo: "Disponible" },
+        options: [{ label: "5g", price: "50 EUR" }, { label: "10g", price: "90 EUR" }, { label: "25g", price: "200 EUR" }, { label: "100g", price: "400 EUR" }]
+      },
+      {
         id: "cali-thai",
         name: "Cali Thai",
         category: "Weed",
@@ -4520,6 +4534,14 @@
         return;
       }
 
+      function cleanUploadMessage(message) {
+        const text = String(message || "");
+        if (/Invalid Compact JWS|Unauthorized|bucket 40[013]|JWT|service_role|api key/i.test(text)) {
+          return "Configuration Supabase invalide. Verifie SUPABASE_SERVICE_ROLE_KEY sur Render.";
+        }
+        return text || "Upload impossible pour le moment.";
+      }
+
       try {
         if (adminProductMediaButtonEl) adminProductMediaButtonEl.disabled = true;
         if (adminProductMediaStatusEl) adminProductMediaStatusEl.textContent = "Upload en cours...";
@@ -4551,7 +4573,7 @@
         if (adminProductMediaStatusEl) adminProductMediaStatusEl.textContent = "Media ajoute au produit.";
       } catch (error) {
         if (adminProductMediaStatusEl) {
-          adminProductMediaStatusEl.textContent = error.message || "Upload impossible pour le moment.";
+          adminProductMediaStatusEl.textContent = cleanUploadMessage(error.message);
         }
       } finally {
         if (adminProductMediaButtonEl) adminProductMediaButtonEl.disabled = false;
